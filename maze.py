@@ -4,7 +4,7 @@ from numpy.random import random_integers as rnd
  
 def maze(width=81, height=51, complexity=.9, density =0.9):
     # Only odd shapes
-    shape = ((height//2)*2+1, (width//2)*2+1)
+    shape = ((width // 2)*2+1, (height // 2)*2+1)
     # Adjust complexity and density relative to maze size
     complexity = int(complexity*(5*(shape[0]+shape[1])))
     density    = int(density*(shape[0]//2*shape[1]//2))
@@ -15,7 +15,7 @@ def maze(width=81, height=51, complexity=.9, density =0.9):
     Z[:,0] = Z[:,-1] = 1
     # Make isles
     for i in range(density):
-	if i % 10 == 0: print i/float(density) * 100, '%'
+        if i % 10 == 0: print i/float(density) * 100, '%'
         x, y = rnd(0,shape[1]//2)*2, rnd(0,shape[0]//2)*2
         Z[y,x] = 1
         for j in range(complexity):
