@@ -6,8 +6,8 @@ from random import random, choice, randrange
 from maze import *
 
 run = 1
-gridsize = (50, 50)
-scale = 8
+gridsize = (81, 81)
+scale = 6
 size = (gridsize[0] * scale, gridsize[1] * scale)
 vtax = 1
 
@@ -28,7 +28,7 @@ def create_maze(grid):
     for x, i in enumerate(actualmaze):
         for y, j in enumerate(i):
             if j:
-                grid.walls.append((x,y))
+                grid.walls.add((x,y))
     grid.setwalls([])
 
 def genetic_solve(surface, grid):
@@ -92,31 +92,57 @@ def mutate(grid, route, was):
 
 def events(grid):
     print("""e - Find a route
+p - Pause/resume finding route
 m - Create a Maze
 r - Clear the screen
-g - Fix the maze to conform to a grid
-x - Make a random change to the route""")
+g - Fix the map to conform to a grid
+x - Make a random change to the route
+z - randomize the map slightly
+Z - randomize the map completely
+click on a cell - add wall in that cell
+right-click on a cell - remove wall in that cell""")
     grid.draw(surface)
     global run
     last = None
     route = []
     was = []
     to_remove = []
+    solver = None
+    solving = False
 
     while run:
-        e = pygame.event.wait()
+        if solving and solver is not None:
+            e = pygame.event.poll()
+            if e.type is pygame.NOEVENT:
+                try:
+                    route, was = solver.next()
+                except StopIteration:
+                    solver = None
+        else:
+            e = pygame.event.wait()
+
         if e.type == 6:
             last = None
-        elif (e.type == 5 and e.button == 1) or (e.type == 4 and e.buttons[0]):
-            pos = (int(ceil(e.pos[0] / float(size[0]) * grid.x)) - 1,
-                   int(round(e.pos[1] / float(size[1]) * grid.x)) - 1)
+        elif e.type == 5 or e.type == 4 and (e.buttons[0] or e.buttons[2]):
+            pos = (int(e.pos[0] / float(scale)),
+                   int(e.pos[1] / float(scale)))
             if pos == last:
                 continue
             last = pos
-            grid.toggle_pos(pos)
+            if e.type == 5 and e.button == 1 or e.type == 4 and e.buttons[0]:
+                if pos not in grid.walls:
+                    grid.toggle_pos(pos)
+                    grid.draw(surface, 1)
+            if e.type == 5 and e.button == 3 or e.type == 4 and e.buttons[2]:
+                if pos in grid.walls:
+                    grid.toggle_pos(pos)
+                    grid.draw(surface, 1)
         elif e.type == 2 and e.key == 101:
             grid.reset(surface)
-            route, was = grid.solve(surface, [14, 10, 2, 2, 1], None)
+            solver = grid.solve_async(surface, [14, 10, 2, 2, 1], None)
+            solving = True
+        elif e.type == 2 and e.unicode == 'p':
+            solving = (not solving) and solver is not None
         elif e.type == 2 and e.unicode == 'm':
             create_maze(grid)
             grid.draw(surface, 1)
@@ -126,6 +152,10 @@ x - Make a random change to the route""")
             grid.gridify()
         elif e.type == 2 and e.unicode == 'x':
             mutate(grid, route, was)
+        elif e.type == 2 and e.unicode == 'z':
+            grid.randomize(.05)
+        elif e.type == 2 and e.unicode == 'Z':
+            grid.randomize()
         elif e.type == QUIT:
             run = 0
             
@@ -169,7 +199,7 @@ class Grid:
     def __init__(self, x, y, walls, ini, fin):
         self.x = x
         self.y = y
-        self.walls = walls
+        self.walls = set(walls)
         self.blocks = []
         self.mesh = [[None for i in range(y)] for j in range(x)]
         for i in range(x):
@@ -179,17 +209,18 @@ class Grid:
         self.i = ini
         self.f = fin
 
-    def setwalls(self, rlist = []):
-        for i in self.walls:
-            self.mesh[i[0]][i[1]].w = True
-        for i in rlist:
-            self.mesh[i[0]][i[1]].w = False
-            self.walls.remove(i)
+    def setwalls(self, rlist = [], newlist=None):
+        newlist = newlist if newlist is not None else self.walls
+        for pos in newlist:
+            self.mesh[pos[0]][pos[1]].w = True
+        for pos in rlist:
+            self.mesh[pos[0]][pos[1]].w = False
+            self.walls.remove(pos)
 
     def reset(self, surface, walls = False):
         self.blocks = []
         if walls:
-            self.walls = []
+            self.walls = set()
         for i in range(self.x):
             for j in range(self.y):
                 self.mesh[i][j] = Block(i, j, None)
@@ -215,12 +246,11 @@ class Grid:
     def toggle_pos(self, pos):
         """ Toggle wall at pos """
         to_remove = []
-        if not pos in self.walls:
-            self.walls.append(pos)
+        if pos not in self.walls:
+            self.walls.add(pos)
+            self.setwalls([], [pos])
         else:
-            to_remove.append(pos)
-        self.setwalls(to_remove)
-        self.draw(surface, 1)
+            self.setwalls([pos])
 
     def connect(self, a, b):
         """ Connect position a to position B, highlighting it on the grid """
@@ -232,6 +262,8 @@ class Grid:
                     self.toggle_pos((i, j))
 
         if made_change:
+            self.draw(surface, 1)
+
             for i in range(a[0], b[0] + 1):
                 for j in range(a[1], b[1] + 1):
                     Block(i, j, None).draw(surface, 1)
@@ -250,6 +282,8 @@ class Grid:
         for p in neighborhood:
             self.gridify_pos(p)
 
+        self.draw(surface, 1)
+
         for p in neighborhood:
             Block(p[0], p[1], None).draw(surface, 1)
         
@@ -258,7 +292,7 @@ class Grid:
     def gridify_pos(self, pos):
         """ Fix this position to consist with the maze grid """
         i, j = pos
-        if not (i % 2) and not (j % 2) and not (pos in self.walls):
+        if not (i % 2) and not (j % 2) and pos not in self.walls:
             self.toggle_pos(pos)
         if (i % 2) and (j % 2):
             neighbors = find_neighbors(pos)
@@ -278,12 +312,21 @@ class Grid:
                     self.toggle_pos(pos)
 
     def gridify(self):
-        # Make the maze more griddy
+        """ Make the maze more gridlike """
         for i in range(gridsize[0]):
             for j in range(gridsize[1]):
                 self.gridify_pos((i, j))
+            self.draw(surface, 1)
 
-    def solve(self, surface, values, limit):
+    def randomize(self, randomness=1):
+        """ Randomize the grid. randomness of 0 no effect, 1 is fully random"""
+        for i in range(gridsize[0]):
+            for j in range(gridsize[1]):
+                if random() < randomness / 2.0:
+                    self.toggle_pos((i, j))
+            self.draw(surface, 1)
+
+    def solve_async(self, surface, values, limit):
         block = self.mesh[self.i[0]][self.i[1]]
         pos = block.x, block.y
         block.visited = True
@@ -295,6 +338,7 @@ class Grid:
         counter = 0
         foi = 0
         while 1:
+            yield ([], was)
             counter += 1
             for i in [-1, 0, 1]:
                 for j in [-1, 0, 1]:
@@ -319,16 +363,19 @@ class Grid:
             if (self.blocks):
                 block = min(self.blocks, key = lambda i: i.d)
             else:
-                return [[], was]
+                yield [[], was]
+                return
             block.draw(surface, 1)
             was.append(block)
             if limit != None and len(was) > limit * 2:
-                return [[], was]
+                yield [[], was]
+                return
             pos = (block.x, block.y)
             if block == aim: break
             if foi: break
         route = [self.mesh[self.f[0]][self.f[1]]]
         while 1:
+            yield (route, was)
             route.append(route[-1].dad)
             route[-1].draw(surface, 2)
             pygame.display.flip()
@@ -337,11 +384,17 @@ class Grid:
         for r in route:
             r.draw(surface, 2)
         pygame.display.flip()
-        return (route, was)
+        yield (route, was)
+
+    def solve(self, surface, values, limit):
+        solver = self.solve_async()
+        for result in solver:
+            pass
+        return result
       
 game = Grid(gridsize[0], gridsize[1],
             [],
             (3,3),
-            (gridsize[0] - 3, gridsize[1] - 3))
+            (gridsize[0] // 2 * 2 - 3, gridsize[1] // 2 * 2 - 3))
 surface = pygame.display.set_mode(size)
 events(game)
