@@ -2,16 +2,18 @@ import pygame
 from pygame.locals import *
 from time import sleep
 from math import sqrt, ceil, floor
-from random import random
+from random import random, choice, randrange
 from maze import *
 
 run = 1
-size = (500, 500)
+gridsize = (150, 150)
+scale = 5
+size = (gridsize[0] * scale, gridsize[1] * scale)
 vtax = 1
 
 def create_maze(grid):
     grid.reset(surface, 1)
-    atualmaze = maze(99, 99)
+    atualmaze = maze(gridsize[0] - 1, gridsize[1] - 1)
     for x, i in enumerate(atualmaze):
         for y, j in enumerate(i):
             if j:
@@ -54,34 +56,123 @@ m - Create a Maze
 r - Clear the screen""")
     grid.draw(surface)
     global run
-    last = None
+    last = [None]
+    route = []
+    was = []
     to_remove = []
+
+    def toggle_pos(pos):
+        to_remove = []
+        if pos == last[0]:
+            return
+        last[0] = pos
+        if not pos in grid.walls:
+            grid.walls.append(pos)
+        else:
+            to_remove.append(pos)
+        grid.setwalls(to_remove)
+        grid.draw(surface, 1)
+
+    def connect(a, b):
+        made_change = False
+        for i in range(a[0], b[0] + 1):
+            for j in range(a[1], b[1] + 1):
+                if (i, j) in grid.walls:
+                    made_change = True
+                    toggle_pos((i, j))
+
+        if made_change:
+            for i in range(a[0], b[0] + 1):
+                for j in range(a[1], b[1] + 1):
+                    Block(i, j, None).draw(surface, 1)
+            
+            pygame.display.flip()
+
+        return made_change
+
+    def gridify(pos):
+        i, j = pos
+        if not (i % 2) and not (j % 2) and not (pos in grid.walls):
+            toggle_pos(pos)
+        if (i % 2) and (j % 2):
+            neighbors = [(i-1, j), (i+1, j), (i, j-1), (i, j+1)]
+            neighbors = [p for p in neighbors
+                         if p[0] >= 0 and p[1] >= 0 and p[0] < gridsize[0] and p[1] < gridsize[1]]
+            neighborhood = [pos] + neighbors
+            neighbor_count = sum(1 if p in grid.walls else 0 for p in neighbors)
+            if neighbor_count == 4:  # This square isn't reachable anyway due to no connectivity
+                if pos not in grid.walls:
+                    toggle_pos(pos)
+            else: # If it could be reachable it shouldn't be a wall
+                if pos in grid.walls:
+                    toggle_pos(pos)
+
+    def break_pos(pos):
+        i, j = pos
+        neighbors = [(i-1, j), (i+1, j), (i, j-1), (i, j+1)]
+        neighbors = [p for p in neighbors
+                     if p[0] >= 0 and p[1] >= 0 and p[0] < gridsize[0] and p[1] < gridsize[1]]
+        neighborhood = [pos] + neighbors
+        for p in neighborhood:
+            if p not in grid.walls:
+                toggle_pos(p)
+
+        gridify(pos)
+
+        for p in neighborhood:
+            Block(p[0], p[1], None).draw(surface, 1)
+        
+        pygame.display.flip()
+
     while run:
         e = pygame.event.wait()
         if e.type == 6:
-            last = None
+            last[0] = None
         elif (e.type == 5 and e.button == 1) or (e.type == 4 and e.buttons[0]):
             pos = (int(ceil(e.pos[0] / float(size[0]) * grid.x)) - 1, int(round(e.pos[1] / float(size[1]) * grid.x)) - 1)
-            to_remove = []
-            if pos == last:
-                continue
-            else:
-                last = pos
-            if not pos in grid.walls:
-                grid.walls.append(pos)
-            else:
-                to_remove.append(pos)
-            grid.setwalls(to_remove)
-            grid.draw(surface, 1)
+            toggle_pos(pos)
         elif e.type == 2 and e.key == 101:
             grid.reset(surface)
             #genetic_solve(surface, grid)
-            grid.solve(surface, [14, 10, 2, 2, 1], None)
+            route, was = grid.solve(surface, [14, 10, 2, 2, 1], None)
+            print len(route), len(was)
         elif e.type == 2 and e.unicode == 'm':
             create_maze(grid)
             grid.draw(surface, 1)
         elif e.type == 2 and e.unicode == 'r':
             grid.reset(surface, 1)
+        elif e.type == 2 and e.unicode == 'g':
+            # Make the maze more griddy
+            for i in range(gridsize[0]):
+                for j in range(gridsize[1]):
+                    gridify((i, j))
+            for p in [grid.i, grid.f]:
+                if p in grid.walls:
+                    toggle_pos(p)
+
+        elif e.type == 2 and e.unicode == 'x':
+            if route:
+                followed = [(block.x, block.y) for block in route
+                            if (block.x % 2) and (block.y % 2)]
+                breakage = choice(followed)
+                print "Breaking %d, %d" % breakage
+                break_pos(breakage)
+            elif was:
+                explored = [(block.x, block.y) for block in was
+                            if (block.x % 2) and (block.y % 2)]
+                while explored:
+                    x, y = choice(explored)
+                    print "Considering %d, %d" % (x, y)
+                    neighbors = [(x-2, y), (x+2, y), (x, y-2), (x, y+2)]
+                    missing_neighbors = [p for p in neighbors
+                                         if p not in explored and
+                                            p[0] >= 0 and p[0] < gridsize[0] and
+                                            p[1] >= 0 and p[1] < gridsize[1]]
+                    if missing_neighbors:
+                        new_neighbor = choice(missing_neighbors)
+                        if connect((x,y), new_neighbor):
+                            print "Connecting %d, %d to %d, %d" % (x, y, new_neighbor[0], new_neighbor[1])
+                            break
         elif e.type == QUIT:
             run = 0
             
@@ -108,18 +199,18 @@ class Block:
 
     def draw(self, surface, c = 0):
         if self.w:
-            pygame.draw.rect(surface, (100, 100, 100), (self.x * 5, self.y * 5, 5, 5))
-            #pygame.draw.rect(surface, (255, 255, 255), (self.x * 5, self.y * 5, 5, 5), 1)
+            pygame.draw.rect(surface, (100, 100, 100),
+                             (self.x * scale, self.y * scale, scale, scale))
             return
         if c == 1:
-            pygame.draw.rect(surface, (0, 255, 0), (self.x * 5, self.y * 5, 5, 5))
-            #pygame.draw.rect(surface, (255, 255, 255), (self.x * 5, self.y * 5, 5, 5), 1)
+            pygame.draw.rect(surface, (0, 255, 0),
+                             (self.x * scale, self.y * scale, scale, scale))
         elif c == 0:
-            pygame.draw.rect(surface, (255, 0, 0), (self.x * 5, self.y * 5, 5, 5))
-            #pygame.draw.rect(surface, (255, 255, 255), (self.x * 5, self.y * 5, 5, 5), 1)
+            pygame.draw.rect(surface, (255, 0, 0),
+                             (self.x * scale, self.y * scale, scale, scale))
         elif c == 2:
-            pygame.draw.rect(surface, (0, 255, 0), (self.x * 5, self.y * 5, 5, 5))
-            #pygame.draw.rect(surface, (0, 0, 0), (self.x * 5, self.y * 5, 5, 5), 1)
+            pygame.draw.rect(surface, (0, 255, 0),
+                             (self.x * scale, self.y * scale, scale, scale))
 
 class Grid:
     def __init__(self, x, y, walls, ini, fin):
@@ -161,10 +252,10 @@ class Grid:
         for b in self.blocks:
             b.draw(surface)
         #Draw the initial block
-        pygame.draw.rect(surface, (255, 0, 255), (self.i[0] * 5, self.i[1] * 5, 5, 5))
+        pygame.draw.rect(surface, (255, 0, 255), (self.i[0] * scale, self.i[1] * scale, scale, scale))
         #pygame.draw.rect(surface, (255, 255, 255), (self.i[0] * 2, self.i[1] * 2, 2, 2), 1)
         #Draw the final block
-        pygame.draw.rect(surface, (0, 0, 255), (self.f[0] * 5, self.f[1] * 5, 5, 5))
+        pygame.draw.rect(surface, (0, 0, 255), (self.f[0] * scale, self.f[1] * scale, scale, scale))
         #pygame.draw.rect(surface, (255, 255, 255), (self.f[0] * 2, self.f[1] * 2, 2, 2), 1)
         pygame.display.flip()
 
@@ -200,11 +291,14 @@ class Grid:
             if block in self.blocks:
                 self.blocks.remove(block)
             wasblocks += self.blocks
-            block = min(self.blocks, key = lambda i: i.d)
+            if (self.blocks):
+                block = min(self.blocks, key = lambda i: i.d)
+            else:
+                return [[], was]
             block.draw(surface, 1)
             was.append(block)
             if limit != None and len(was) > limit * 2:
-                return [1000, 1000]
+                return [[], was]
             pos = (block.x, block.y)
             if block == aim: break
             if foi: break
@@ -222,9 +316,9 @@ class Grid:
         for r in route:
             r.draw(surface, 2)
         pygame.display.flip()
-        return [len(route),len(was)]
+        return (route, was)
       
-game = Grid(100, 100, [] , (1,1), (97, 97))
+game = Grid(gridsize[0], gridsize[1], [] , (3,3), (gridsize[0] - 3, gridsize[1] - 3))
 surface = pygame.display.set_mode(size)
 events(game)
 #game.solve(surface)
